@@ -1,0 +1,12 @@
+[package]
+name = "tinnitus"
+version = "0.1.0"
+edition = "2021"
+authors = ["Andrew Gazelka <andrew.gazelka@gmail.com>"]
+
+[dependencies]
+anyhow = "1.0.75"
+assert_no_alloc = "1.1.2"
+cpal = "0.15.2"
+ctrlc = "3.4.1"
+fundsp = "0.15.0"
