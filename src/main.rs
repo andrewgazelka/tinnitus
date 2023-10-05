@@ -1,16 +1,77 @@
 //! Make some noise via cpal.
 #![allow(clippy::precedence)]
 
-use std::thread;
+extern crate core;
 
-use assert_no_alloc::*;
+use std::{sync::Arc, thread};
+
+use anyhow::bail;
+use assert_no_alloc::assert_no_alloc;
 use cpal::{
     FromSample,
     SizedSample, traits::{DeviceTrait, HostTrait, StreamTrait},
 };
-use fundsp::hacker::*;
+use fundsp::{
+    hacker::{AudioNode, AudioUnit64, Net64, white},
+    prelude::sine_hz,
+};
+use itertools::Itertools;
+use logos::{Lexer, Logos};
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Debug)]
+enum Sound {
+    Sin(f64),
+    White,
+}
+
+#[derive(Default, Debug, Clone)]
+enum Error {
+    #[default]
+    Default,
+    Err(Arc<dyn std::error::Error + Sync + Send>),
+}
+
+impl PartialEq for Error {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Error::Default, Error::Default) => true,
+            (Error::Err(_), Error::Err(_)) => true,
+            _ => false,
+        }
+    }
+}
+
+// impl from
+impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {
+    fn from(err: E) -> Self {
+        Error::Err(Arc::new(err))
+    }
+}
+
+type Result<T> = std::result::Result<T, Error>;
+
+fn parse_int(lex: &mut Lexer<Token>) -> Result<f64> {
+    let slice = lex.slice();
+    let n: u64 = slice.parse()?;
+    Ok(n as f64)
+}
+
+fn parse_float(lex: &mut Lexer<Token>) -> Result<f64> {
+    let slice = lex.slice();
+    let n: f64 = slice.parse()?;
+    Ok(n)
+}
 
 fn main() {
+    // input separated by spaces
+    let input = std::env::args().skip(1).join(" ");
+    let lex = Token::lexer(&input);
+    let tokens: Vec<_> = lex.try_collect().unwrap();
+    let ast = to_ast(tokens).unwrap();
+
+    println!("{:?}", ast);
+
     let host = cpal::default_host();
 
     let device = host
@@ -19,22 +80,108 @@ fn main() {
     let config = device.default_output_config().unwrap();
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into()).unwrap(),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into()).unwrap(),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into()).unwrap(),
+        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), ast).unwrap(),
+        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), ast).unwrap(),
+        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), ast).unwrap(),
         _ => panic!("Unsupported format"),
     }
 }
 
-fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig) -> Result<(), anyhow::Error>
+#[derive(Logos, Debug, PartialEq, Copy, Clone)]
+#[logos(skip r"[ \t\n\f]+")] // Ignore this regex pattern between tokens
+#[logos(error = Error)]
+enum Token {
+    // Tokens can be literal strings, of any length.
+    #[token("sin")]
+    Sin,
+
+    // Tokens can be literal strings, of any length.
+    #[token("white")]
+    White,
+
+    #[token("|")]
+    Pipe,
+
+    #[regex("[0-9]+", parse_int)]
+    #[regex("[0-9]+\\.[0-9]*", parse_float)]
+    Number(f64),
+}
+
+fn to_ast(tokens: impl IntoIterator<Item = Token>) -> anyhow::Result<Vec<Vec<Sound>>> {
+    let tokens = tokens.into_iter();
+    let mut peekable = tokens.peekable();
+
+    let mut sounds = vec![Vec::new()];
+
+    while let Some(on) = peekable.next() {
+        let next = peekable.peek().copied();
+
+        match on {
+            Token::Sin => {
+                let Some(Token::Number(num)) = next else {
+                    bail!("need hz for sin");
+                };
+                sounds.last_mut().unwrap().push(Sound::Sin(num));
+
+                peekable.next();
+            }
+            Token::Pipe => {
+                sounds.push(vec![]);
+            }
+            Token::White => {
+                sounds.last_mut().unwrap().push(Sound::White);
+            }
+            Token::Number(_) => {
+                bail!("unused number");
+            }
+        }
+    }
+
+    Ok(sounds)
+}
+
+trait ValidSound: AudioNode + AudioUnit64 {}
+
+impl<T> ValidSound for T where T: AudioNode + AudioUnit64 {}
+
+fn run<T>(
+    device: &cpal::Device,
+    config: &cpal::StreamConfig,
+    ast: Vec<Vec<Sound>>,
+) -> anyhow::Result<()>
 where
     T: SizedSample + FromSample<f64>,
 {
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;
 
-    let hz = 2110.0 / 1.0;
-    let mut c = saw_hz(hz) * 0.02 + sine_hz(hz);
+    fn combine(sounds: Vec<Sound>) -> Net64 {
+        sounds.into_iter()
+            .map(|sound| {
+                let sound: Box<dyn AudioUnit64> = match sound {
+                    Sound::Sin(freq) => Box::new(sine_hz(freq)),
+                    Sound::White => Box::new(white()),
+                };
+                Net64::wrap(sound)
+            })
+            .reduce(|a, b| a + b)
+            .unwrap()
+    }
+
+    // todo: edge case pipe and nothing on end
+
+    let res = ast
+        .into_iter()
+        .map(|elem| combine(elem))
+        .reduce(|a,b| {
+            a | b
+        })
+        .unwrap();
+
+
+    println!("channels {channels}");
+
+    let mut c = res;
 
     c.set_sample_rate(sample_rate);
     c.allocate();
@@ -73,12 +220,13 @@ where
     T: SizedSample + FromSample<f64>,
 {
     for frame in output.chunks_mut(channels) {
-        let sample = next_sample();
-        let left = T::from_sample(sample.0);
-        let right: T = T::from_sample(sample.1);
+        let (left, right) = next_sample();
+
+        let left = T::from_sample(left);
+        let right: T = T::from_sample(right);
 
         for (channel, sample) in frame.iter_mut().enumerate() {
-            if channel & 1 == 0 {
+            if channel & 0b1 == 0 {
                 *sample = left;
             } else {
                 *sample = right;
