@@ -1,4 +1,4 @@
-//! Make some noise via cpal.
+//! Make some noise
 #![allow(clippy::precedence)]
 
 extern crate core;
@@ -15,6 +15,7 @@ use fundsp::{
     hacker::{AudioNode, AudioUnit64, Net64, white},
     prelude::sine_hz,
 };
+use fundsp::hacker::{brown, pink};
 use itertools::Itertools;
 use logos::{Lexer, Logos};
 use serde::{Deserialize, Serialize};
@@ -23,6 +24,9 @@ use serde::{Deserialize, Serialize};
 enum Sound {
     Sin(f64),
     White,
+    Brown,
+    Pink,
+    None,
 }
 
 #[derive(Default, Debug, Clone)]
@@ -34,11 +38,7 @@ enum Error {
 
 impl PartialEq for Error {
     fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Error::Default, Error::Default) => true,
-            (Error::Err(_), Error::Err(_)) => true,
-            _ => false,
-        }
+        matches!((self, other), (Error::Default, Error::Default) | (Error::Err(_), Error::Err(_)))
     }
 }
 
@@ -51,13 +51,13 @@ impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn parse_int(lex: &mut Lexer<Token>) -> Result<f64> {
+fn parse_int(lex: &Lexer<Token>) -> Result<f64> {
     let slice = lex.slice();
     let n: u64 = slice.parse()?;
     Ok(n as f64)
 }
 
-fn parse_float(lex: &mut Lexer<Token>) -> Result<f64> {
+fn parse_float(lex: &Lexer<Token>) -> Result<f64> {
     let slice = lex.slice();
     let n: f64 = slice.parse()?;
     Ok(n)
@@ -99,8 +99,15 @@ enum Token {
     #[token("white")]
     White,
 
+    #[token("brown")]
+    Brown,
+
+    #[token("pink")]
+    Pink,
+
     #[token("|")]
     Pipe,
+
 
     #[regex("[0-9]+", parse_int)]
     #[regex("[0-9]+\\.[0-9]*", parse_float)]
@@ -128,9 +135,9 @@ fn to_ast(tokens: impl IntoIterator<Item = Token>) -> anyhow::Result<Vec<Vec<Sou
             Token::Pipe => {
                 sounds.push(vec![]);
             }
-            Token::White => {
-                sounds.last_mut().unwrap().push(Sound::White);
-            }
+            Token::White => sounds.last_mut().unwrap().push(Sound::White),
+            Token::Brown => sounds.last_mut().unwrap().push(Sound::Brown),
+            Token::Pink => sounds.last_mut().unwrap().push(Sound::Pink),
             Token::Number(_) => {
                 bail!("unused number");
             }
@@ -161,18 +168,21 @@ where
                 let sound: Box<dyn AudioUnit64> = match sound {
                     Sound::Sin(freq) => Box::new(sine_hz(freq)),
                     Sound::White => Box::new(white()),
+                    Sound::Brown => Box::new(brown()),
+                    Sound::Pink => Box::new(pink()),
+                    Sound::None => Box::<Net64>::default(),
                 };
                 Net64::wrap(sound)
             })
             .reduce(|a, b| a + b)
-            .unwrap()
+            .unwrap_or_else(Net64::default)
     }
 
     // todo: edge case pipe and nothing on end
 
     let res = ast
         .into_iter()
-        .map(|elem| combine(elem))
+        .map(combine)
         .reduce(|a,b| {
             a | b
         })
