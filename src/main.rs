@@ -7,17 +7,16 @@ use std::{sync::Arc, thread};
 
 use anyhow::bail;
 use assert_no_alloc::assert_no_alloc;
+use clap::Parser;
 use cpal::{
-    FromSample,
-    SizedSample, traits::{DeviceTrait, HostTrait, StreamTrait},
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+    FromSample, SizedSample,
 };
-use fundsp::{
-    hacker::{AudioNode, AudioUnit64, Net64, white},
-    prelude::sine_hz,
+use crossterm::{
+    event::{Event, KeyCode, KeyModifiers},
+    terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{brown, pink};
-use itertools::Itertools;
-use logos::{Lexer, Logos};
+use fundsp::hacker::{highpole_hz, lowpole_hz, white, AudioNode, AudioUnit64};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -38,7 +37,10 @@ enum Error {
 
 impl PartialEq for Error {
     fn eq(&self, other: &Self) -> bool {
-        matches!((self, other), (Error::Default, Error::Default) | (Error::Err(_), Error::Err(_)))
+        matches!(
+            (self, other),
+            (Error::Default, Error::Default) | (Error::Err(_), Error::Err(_))
+        )
     }
 }
 
@@ -51,26 +53,17 @@ impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {
 
 type Result<T> = std::result::Result<T, Error>;
 
-fn parse_int(lex: &Lexer<Token>) -> Result<f64> {
-    let slice = lex.slice();
-    let n: u64 = slice.parse()?;
-    Ok(n as f64)
-}
-
-fn parse_float(lex: &Lexer<Token>) -> Result<f64> {
-    let slice = lex.slice();
-    let n: f64 = slice.parse()?;
-    Ok(n)
+#[derive(Parser)]
+struct Args {
+    frequency: f64,
+    width: f64,
 }
 
 fn main() {
     // input separated by spaces
-    let input = std::env::args().skip(1).join(" ");
-    let lex = Token::lexer(&input);
-    let tokens: Vec<_> = lex.try_collect().unwrap();
-    let ast = to_ast(tokens).unwrap();
+    let args = Args::parse();
 
-    println!("{:?}", ast);
+    enable_raw_mode().unwrap();
 
     let host = cpal::default_host();
 
@@ -80,123 +73,35 @@ fn main() {
     let config = device.default_output_config().unwrap();
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), ast).unwrap(),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), ast).unwrap(),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), ast).unwrap(),
+        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), args).unwrap(),
+        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), args).unwrap(),
+        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), args).unwrap(),
         _ => panic!("Unsupported format"),
     }
 }
 
-#[derive(Logos, Debug, PartialEq, Copy, Clone)]
-#[logos(skip r"[ \t\n\f]+")] // Ignore this regex pattern between tokens
-#[logos(error = Error)]
-enum Token {
-    // Tokens can be literal strings, of any length.
-    #[token("sin")]
-    Sin,
-
-    // Tokens can be literal strings, of any length.
-    #[token("white")]
-    White,
-
-    #[token("brown")]
-    Brown,
-
-    #[token("pink")]
-    Pink,
-
-    #[token("|")]
-    Pipe,
-
-
-    #[regex("[0-9]+", parse_int)]
-    #[regex("[0-9]+\\.[0-9]*", parse_float)]
-    Number(f64),
-}
-
-fn to_ast(tokens: impl IntoIterator<Item = Token>) -> anyhow::Result<Vec<Vec<Sound>>> {
-    let tokens = tokens.into_iter();
-    let mut peekable = tokens.peekable();
-
-    let mut sounds = vec![Vec::new()];
-
-    while let Some(on) = peekable.next() {
-        let next = peekable.peek().copied();
-
-        match on {
-            Token::Sin => {
-                let Some(Token::Number(num)) = next else {
-                    bail!("need hz for sin");
-                };
-                sounds.last_mut().unwrap().push(Sound::Sin(num));
-
-                peekable.next();
-            }
-            Token::Pipe => {
-                sounds.push(vec![]);
-            }
-            Token::White => sounds.last_mut().unwrap().push(Sound::White),
-            Token::Brown => sounds.last_mut().unwrap().push(Sound::Brown),
-            Token::Pink => sounds.last_mut().unwrap().push(Sound::Pink),
-            Token::Number(_) => {
-                bail!("unused number");
-            }
-        }
-    }
-
-    Ok(sounds)
-}
-
-trait ValidSound: AudioNode + AudioUnit64 {}
-
-impl<T> ValidSound for T where T: AudioNode + AudioUnit64 {}
-
-fn run<T>(
-    device: &cpal::Device,
-    config: &cpal::StreamConfig,
-    ast: Vec<Vec<Sound>>,
-) -> anyhow::Result<()>
+fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: Args) -> anyhow::Result<()>
 where
     T: SizedSample + FromSample<f64>,
 {
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;
 
-    fn combine(sounds: Vec<Sound>) -> Net64 {
-        sounds.into_iter()
-            .map(|sound| {
-                let sound: Box<dyn AudioUnit64> = match sound {
-                    Sound::Sin(freq) => Box::new(sine_hz(freq)),
-                    Sound::White => Box::new(white()),
-                    Sound::Brown => Box::new(brown()),
-                    Sound::Pink => Box::new(pink()),
-                    Sound::None => Box::<Net64>::default(),
-                };
-                Net64::wrap(sound)
-            })
-            .reduce(|a, b| a + b)
-            .unwrap_or_else(Net64::default)
-    }
+    let hz = args.frequency;
+    let width = args.width;
+    let min = hz - width;
+    let max = hz + width;
 
-    // todo: edge case pipe and nothing on end
+    let white_low = white() >> lowpole_hz(min);
+    let white_high = white() >> highpole_hz(max);
 
-    let res = ast
-        .into_iter()
-        .map(combine)
-        .reduce(|a,b| {
-            a | b
-        })
-        .unwrap();
+    let mut res = white_low + white_high;
+    // let mut res = res * 0.0001;
 
+    res.set_sample_rate(sample_rate);
+    res.allocate();
 
-    println!("channels {channels}");
-
-    let mut c = res;
-
-    c.set_sample_rate(sample_rate);
-    c.allocate();
-
-    let mut next_value = move || assert_no_alloc(|| c.get_stereo());
+    let mut next_value = move || assert_no_alloc(|| res.get_stereo());
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
@@ -212,15 +117,40 @@ where
 
     let handle = thread::current();
 
-    ctrlc::set_handler(move || {
-        println!("Received Ctrl-C, exiting...");
-        handle.unpark();
+    ctrlc::set_handler({
+        let handle = handle.clone();
+        move || {
+            println!("Received Ctrl-C, exiting...");
+            handle.unpark();
+        }
     })
     .expect("Error setting Ctrl-C handler");
 
-    println!("Waiting for Ctrl-C...");
+    thread::spawn(move || loop {
+        let event = crossterm::event::read().unwrap();
+
+        let Event::Key(event) = event else {
+            continue;
+        };
+
+        if event.modifiers == KeyModifiers::CONTROL && event.code == KeyCode::Char('c') {
+            handle.unpark();
+            return;
+        }
+
+        match event.code {
+            KeyCode::Char(' ') => {}
+            KeyCode::Esc => {}
+            _ => continue,
+        }
+
+        handle.unpark();
+        return;
+    });
+
     thread::park();
-    println!("Exited successfully.");
+
+    disable_raw_mode().unwrap();
 
     Ok(())
 }
