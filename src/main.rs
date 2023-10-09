@@ -1,9 +1,6 @@
-//! Make some noise
-#![allow(clippy::precedence)]
-
 extern crate core;
 
-use std::{sync::Arc, thread, time::SystemTime};
+use std::{sync::Mutex, thread, time::SystemTime};
 
 use assert_no_alloc::assert_no_alloc;
 use clap::Parser;
@@ -15,7 +12,11 @@ use crossterm::{
     event::{Event, KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{AudioUnit64, highpole_hz, lowpole_hz, sine_hz, white};
+use fundsp::hacker::highpole_hz;
+use fundsp::hacker::lowpole_hz;
+use fundsp::hacker::pink;
+use fundsp::hacker::notch_hz;
+use fundsp::hacker::prelude::*;
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -27,30 +28,6 @@ enum Sound {
     None,
 }
 
-#[derive(Default, Debug, Clone)]
-enum Error {
-    #[default]
-    Default,
-    Err(Arc<dyn std::error::Error + Sync + Send>),
-}
-
-impl PartialEq for Error {
-    fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (Error::Default, Error::Default) | (Error::Err(_), Error::Err(_))
-        )
-    }
-}
-
-// impl from
-impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {
-    fn from(err: E) -> Self {
-        Error::Err(Arc::new(err))
-    }
-}
-
-
 #[derive(Parser)]
 #[clap(version, author, about)]
 struct Args {
@@ -58,6 +35,7 @@ struct Args {
     frequency: f64,
 
     /// the frequency radius to notch out
+    #[clap(default_value = "50")]
     radius: f64,
 }
 
@@ -72,20 +50,24 @@ fn main() {
     let device = host
         .default_output_device()
         .expect("Failed to find a default output device");
+
     let config = device.default_output_config().unwrap();
 
     match config.sample_format() {
-        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), args).unwrap(),
-        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), args).unwrap(),
-        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), args).unwrap(),
+        cpal::SampleFormat::F32 => run::<f32>(&device, &config.into(), &args).unwrap(),
+        cpal::SampleFormat::I16 => run::<i16>(&device, &config.into(), &args).unwrap(),
+        cpal::SampleFormat::U16 => run::<u16>(&device, &config.into(), &args).unwrap(),
         _ => panic!("Unsupported format"),
     }
 }
 
-fn sin_audio(args: &Args) -> impl AudioUnit64 {
+fn first_audio(args: &Args) -> impl AudioUnit64 {
     let hz = args.frequency;
+    let width = args.radius;
+    let min = hz - width;
+    let max = hz + width;
 
-    sine_hz(hz) * 0.1
+    white() >> lowpole_hz(max) >> highpole_hz(min)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
@@ -94,43 +76,48 @@ fn main_audio(args: &Args) -> impl AudioUnit64 {
     let min = hz - width;
     let max = hz + width;
 
-    let white_low = white() >> lowpole_hz(min);
-    let white_high = white() >> highpole_hz(max);
+    let low = pink() >> lowpole_hz(min);
+    let high = pink() >> highpole_hz(max);
 
-    (white_low + white_high) * 0.1
+    low + high
 }
 
-fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: Args) -> anyhow::Result<()>
+static LOUDNESS: Mutex<f64> = Mutex::new(0.1);
+
+fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: &Args) -> anyhow::Result<()>
 where
     T: SizedSample + FromSample<f64>,
 {
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;
 
-    let mut sin = sin_audio(&args);
+    let mut sin = first_audio(args);
     sin.set_sample_rate(sample_rate);
     sin.allocate();
 
-    let mut main = main_audio(&args);
+    let mut main = main_audio(args);
     main.set_sample_rate(sample_rate);
     main.allocate();
 
     let mut start = None;
+
 
     let mut next_value_sin = move || {
         assert_no_alloc(|| {
             let start = start.get_or_insert_with(SystemTime::now);
             let time_passed = start.elapsed().unwrap().as_millis();
 
-            if time_passed > 500 {
-                main.get_stereo()
-            } else {
-                sin.get_stereo()
-            }
+            let (l, r) = match time_passed > 500 {
+                true => main.get_stereo(),
+                false => sin.get_stereo(),
+            };
+
+            let loudness = *LOUDNESS.lock().unwrap();
+            (l * loudness, r * loudness)
         })
     };
 
-    let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
+    let err_fn = |err| eprintln!("an error occurred on stream: {err}");
 
     let stream = device.build_output_stream(
         config,
@@ -143,6 +130,7 @@ where
     stream.play()?;
 
     let handle = thread::current();
+
 
     ctrlc::set_handler({
         let handle = handle.clone();
@@ -166,8 +154,19 @@ where
         }
 
         match event.code {
-            KeyCode::Char(' ') => {}
-            KeyCode::Esc => {}
+            KeyCode::Esc | KeyCode::Char(' ') => {}
+            KeyCode::Up => {
+                // max out at 1
+                let loudness = *LOUDNESS.lock().unwrap();
+
+                *LOUDNESS.lock().unwrap() = (loudness * 2.0).min(1.0);
+
+                continue;
+            }
+            KeyCode::Down => {
+                *LOUDNESS.lock().unwrap() /= 2.0;
+                continue;
+            }
             _ => continue,
         }
 
