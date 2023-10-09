@@ -3,9 +3,8 @@
 
 extern crate core;
 
-use std::{sync::Arc, thread};
+use std::{sync::Arc, thread, time::SystemTime};
 
-use anyhow::bail;
 use assert_no_alloc::assert_no_alloc;
 use clap::Parser;
 use cpal::{
@@ -16,7 +15,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{highpole_hz, lowpole_hz, white, AudioNode, AudioUnit64};
+use fundsp::hacker::{highpole_hz, lowpole_hz, sine_hz, white, AudioUnit64};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -51,8 +50,6 @@ impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {
     }
 }
 
-type Result<T> = std::result::Result<T, Error>;
-
 #[derive(Parser)]
 struct Args {
     frequency: f64,
@@ -80,13 +77,13 @@ fn main() {
     }
 }
 
-fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: Args) -> anyhow::Result<()>
-where
-    T: SizedSample + FromSample<f64>,
-{
-    let sample_rate = config.sample_rate.0 as f64;
-    let channels = config.channels as usize;
+fn sin_audio(args: &Args) -> impl AudioUnit64 {
+    let hz = args.frequency;
 
+    sine_hz(hz) * 0.1
+}
+
+fn main_audio(args: &Args) -> impl AudioUnit64 {
     let hz = args.frequency;
     let width = args.width;
     let min = hz - width;
@@ -95,20 +92,45 @@ where
     let white_low = white() >> lowpole_hz(min);
     let white_high = white() >> highpole_hz(max);
 
-    let mut res = white_low + white_high;
-    // let mut res = res * 0.0001;
+    (white_low + white_high) * 0.1
+}
 
-    res.set_sample_rate(sample_rate);
-    res.allocate();
+fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: Args) -> anyhow::Result<()>
+where
+    T: SizedSample + FromSample<f64>,
+{
+    let sample_rate = config.sample_rate.0 as f64;
+    let channels = config.channels as usize;
 
-    let mut next_value = move || assert_no_alloc(|| res.get_stereo());
+    let mut sin = sin_audio(&args);
+    sin.set_sample_rate(sample_rate);
+    sin.allocate();
+
+    let mut main = main_audio(&args);
+    main.set_sample_rate(sample_rate);
+    main.allocate();
+
+    let mut start = None;
+
+    let mut next_value_sin = move || {
+        assert_no_alloc(|| {
+            let start = start.get_or_insert_with(SystemTime::now);
+            let time_passed = start.elapsed().unwrap().as_millis();
+
+            if time_passed > 500 {
+                main.get_stereo()
+            } else {
+                sin.get_stereo()
+            }
+        })
+    };
 
     let err_fn = |err| eprintln!("an error occurred on stream: {}", err);
 
     let stream = device.build_output_stream(
         config,
         move |data: &mut [T], _: &cpal::OutputCallbackInfo| {
-            write_data(data, channels, &mut next_value);
+            write_data(data, channels, &mut next_value_sin);
         },
         err_fn,
         None,
