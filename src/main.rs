@@ -8,14 +8,14 @@ use std::{sync::Arc, thread, time::SystemTime};
 use assert_no_alloc::assert_no_alloc;
 use clap::Parser;
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
-    FromSample, SizedSample,
+    FromSample,
+    SizedSample, traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use crossterm::{
     event::{Event, KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{highpole_hz, lowpole_hz, sine_hz, white, AudioUnit64};
+use fundsp::hacker::{AudioUnit64, highpole_hz, lowpole_hz, sine_hz, white};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -50,10 +50,15 @@ impl<E: std::error::Error + Send + Sync + 'static> From<E> for Error {
     }
 }
 
+
 #[derive(Parser)]
+#[clap(version, author, about)]
 struct Args {
+    /// frequency of the tinnitus
     frequency: f64,
-    width: f64,
+
+    /// the frequency radius to notch out
+    radius: f64,
 }
 
 fn main() {
@@ -85,7 +90,7 @@ fn sin_audio(args: &Args) -> impl AudioUnit64 {
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
     let hz = args.frequency;
-    let width = args.width;
+    let width = args.radius;
     let min = hz - width;
     let max = hz + width;
 

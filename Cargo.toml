@@ -3,6 +3,7 @@ name = "tinnitus"
 version = "0.1.0"
 edition = "2021"
 authors = ["Andrew Gazelka <andrew.gazelka@gmail.com>"]
+description = "A TRT app for audio notching"
 
 [dependencies]
 anyhow = "1.0.75"
