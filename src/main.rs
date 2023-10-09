@@ -5,18 +5,14 @@ use std::{sync::Mutex, thread, time::SystemTime};
 use assert_no_alloc::assert_no_alloc;
 use clap::Parser;
 use cpal::{
-    FromSample,
-    SizedSample, traits::{DeviceTrait, HostTrait, StreamTrait},
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+    FromSample, SizedSample,
 };
 use crossterm::{
     event::{Event, KeyCode, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::highpole_hz;
-use fundsp::hacker::lowpole_hz;
-use fundsp::hacker::pink;
-use fundsp::hacker::notch_hz;
-use fundsp::hacker::prelude::*;
+use fundsp::hacker::{highpole_hz, lowpole_hz, pink, prelude::*};
 use serde::{Deserialize, Serialize};
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -88,7 +84,7 @@ fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: &Args) -> an
 where
     T: SizedSample + FromSample<f64>,
 {
-    let sample_rate = config.sample_rate.0 as f64;
+    let sample_rate = f64::from(config.sample_rate.0);
     let channels = config.channels as usize;
 
     let mut sin = removed_audio(args);
@@ -100,7 +96,6 @@ where
     main.allocate();
 
     let mut start = None;
-
 
     let mut next_value_sin = move || {
         assert_no_alloc(|| {
@@ -130,7 +125,6 @@ where
     stream.play()?;
 
     let handle = thread::current();
-
 
     ctrlc::set_handler({
         let handle = handle.clone();
