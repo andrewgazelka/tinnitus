@@ -9,20 +9,14 @@ use cpal::{
     FromSample, SizedSample,
 };
 use crossterm::{
-    event::{Event, KeyCode, KeyModifiers},
+    event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
 use fundsp::hacker::{highpole_hz, lowpole_hz, pink, prelude::*};
-use serde::{Deserialize, Serialize};
 
-#[derive(Serialize, Deserialize, Debug)]
-enum Sound {
-    Sin(f64),
-    White,
-    Brown,
-    Pink,
-    None,
-}
+use crate::utils::write_data;
+
+mod utils;
 
 #[derive(Parser)]
 #[clap(version, author, about)]
@@ -129,7 +123,6 @@ where
     ctrlc::set_handler({
         let handle = handle.clone();
         move || {
-            println!("Received Ctrl-C, exiting...");
             handle.unpark();
         }
     })
@@ -138,34 +131,37 @@ where
     thread::spawn(move || loop {
         let event = crossterm::event::read().unwrap();
 
-        let Event::Key(event) = event else {
-            continue;
-        };
-
-        if event.modifiers == KeyModifiers::CONTROL && event.code == KeyCode::Char('c') {
-            handle.unpark();
-            return;
-        }
-
-        match event.code {
-            KeyCode::Esc | KeyCode::Char(' ') => {}
-            KeyCode::Up => {
+        match event {
+            Event::Key(
+                KeyEvent {
+                    code: KeyCode::Esc | KeyCode::Char(' '),
+                    ..
+                }
+                | KeyEvent {
+                    code: KeyCode::Char('c'),
+                    modifiers: KeyModifiers::CONTROL,
+                    ..
+                },
+            ) => {
+                handle.unpark();
+                return;
+            }
+            Event::Key(KeyEvent {
+                code: KeyCode::Up, ..
+            }) => {
                 // max out at 1
                 let loudness = *LOUDNESS.lock().unwrap();
 
                 *LOUDNESS.lock().unwrap() = (loudness * 2.0).min(1.0);
-
-                continue;
             }
-            KeyCode::Down => {
-                *LOUDNESS.lock().unwrap() /= 2.0;
-                continue;
+            Event::Key(KeyEvent {
+                code: KeyCode::Down,
+                ..
+            }) => {
+                *LOUDNESS.lock().unwrap() *= 0.5;
             }
-            _ => continue,
+            _ => {}
         }
-
-        handle.unpark();
-        return;
     });
 
     thread::park();
@@ -173,24 +169,4 @@ where
     disable_raw_mode().unwrap();
 
     Ok(())
-}
-
-fn write_data<T>(output: &mut [T], channels: usize, next_sample: &mut dyn FnMut() -> (f64, f64))
-where
-    T: SizedSample + FromSample<f64>,
-{
-    for frame in output.chunks_mut(channels) {
-        let (left, right) = next_sample();
-
-        let left = T::from_sample(left);
-        let right: T = T::from_sample(right);
-
-        for (channel, sample) in frame.iter_mut().enumerate() {
-            if channel & 0b1 == 0 {
-                *sample = left;
-            } else {
-                *sample = right;
-            }
-        }
-    }
 }
