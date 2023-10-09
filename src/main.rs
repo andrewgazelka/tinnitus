@@ -61,13 +61,13 @@ fn main() {
     }
 }
 
-fn first_audio(args: &Args) -> impl AudioUnit64 {
+fn removed_audio(args: &Args) -> impl AudioUnit64 {
     let hz = args.frequency;
     let width = args.radius;
     let min = hz - width;
     let max = hz + width;
 
-    white() >> lowpole_hz(max) >> highpole_hz(min)
+    pink() >> lowpole_hz(max) >> highpole_hz(min)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
@@ -91,7 +91,7 @@ where
     let sample_rate = config.sample_rate.0 as f64;
     let channels = config.channels as usize;
 
-    let mut sin = first_audio(args);
+    let mut sin = removed_audio(args);
     sin.set_sample_rate(sample_rate);
     sin.allocate();
 
