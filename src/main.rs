@@ -5,14 +5,14 @@ use std::{sync::Mutex, thread, time::SystemTime};
 use assert_no_alloc::assert_no_alloc;
 use clap::Parser;
 use cpal::{
-    FromSample,
-    SizedSample, traits::{DeviceTrait, HostTrait, StreamTrait},
+    traits::{DeviceTrait, HostTrait, StreamTrait},
+    FromSample, SizedSample,
 };
 use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{highpass_hz, lowpass_hz, prelude::*, white};
+use fundsp::hacker::{bandpass_hz, notch_hz, prelude::*, white};
 
 use crate::utils::write_data;
 
@@ -54,24 +54,11 @@ fn main() {
 const Q: f64 = 1000.0;
 
 fn removed_audio(args: &Args) -> impl AudioUnit64 {
-    let hz = args.frequency;
-    let width = args.radius;
-    let min = hz - width;
-    let max = hz + width;
-
-    white() >> lowpass_hz(max, Q) >> highpass_hz(min, Q)
+    white() >> bandpass_hz(args.frequency, Q)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
-    let hz = args.frequency;
-    let width = args.radius;
-    let min = hz - width;
-    let max = hz + width;
-
-    let low = white() >> lowpass_hz(min, Q);
-    let high = white() >> highpass_hz(max, Q);
-
-    low + high
+    white() >> notch_hz(args.frequency, Q)
 }
 
 static LOUDNESS: Mutex<f64> = Mutex::new(0.1);
