@@ -1,11 +1,11 @@
 ```
 A TRT app for audio notching
 
-Usage: tinnitus <FREQUENCY> <RADIUS>
+Usage: tinnitus <FREQUENCY> [Q]
 
 Arguments:
   <FREQUENCY>  frequency of the tinnitus
-  <RADIUS>     the frequency radius to notch out
+  [Q]          Q of the filter [default: 1000.0]
 
 Options:
   -h, --help     Print help
