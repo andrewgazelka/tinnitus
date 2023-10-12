@@ -12,7 +12,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{highpole_hz, lowpole_hz, pink, prelude::*};
+use fundsp::hacker::{bandpass_hz, notch_hz, prelude::*, white};
 
 use crate::utils::write_data;
 
@@ -51,25 +51,14 @@ fn main() {
     }
 }
 
-fn removed_audio(args: &Args) -> impl AudioUnit64 {
-    let hz = args.frequency;
-    let width = args.radius;
-    let min = hz - width;
-    let max = hz + width;
+const Q: f64 = 1000.0;
 
-    pink() >> lowpole_hz(max) >> highpole_hz(min)
+fn removed_audio(args: &Args) -> impl AudioUnit64 {
+    white() >> bandpass_hz(args.frequency, Q)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
-    let hz = args.frequency;
-    let width = args.radius;
-    let min = hz - width;
-    let max = hz + width;
-
-    let low = pink() >> lowpole_hz(min);
-    let high = pink() >> highpole_hz(max);
-
-    low + high
+    white() >> notch_hz(args.frequency, Q)
 }
 
 static LOUDNESS: Mutex<f64> = Mutex::new(0.1);
@@ -96,7 +85,7 @@ where
             let start = start.get_or_insert_with(SystemTime::now);
             let time_passed = start.elapsed().unwrap().as_millis();
 
-            let (l, r) = match time_passed > 500 {
+            let (l, r) = match time_passed > 5000 {
                 true => main.get_stereo(),
                 false => sin.get_stereo(),
             };
