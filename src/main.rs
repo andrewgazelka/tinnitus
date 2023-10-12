@@ -5,14 +5,14 @@ use std::{sync::Mutex, thread, time::SystemTime};
 use assert_no_alloc::assert_no_alloc;
 use clap::Parser;
 use cpal::{
-    traits::{DeviceTrait, HostTrait, StreamTrait},
-    FromSample, SizedSample,
+    FromSample,
+    SizedSample, traits::{DeviceTrait, HostTrait, StreamTrait},
 };
 use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{highpole_hz, lowpole_hz, pink, prelude::*};
+use fundsp::hacker::{highpass_hz, lowpass_hz, prelude::*, white};
 
 use crate::utils::write_data;
 
@@ -51,13 +51,15 @@ fn main() {
     }
 }
 
+const Q: f64 = 1000.0;
+
 fn removed_audio(args: &Args) -> impl AudioUnit64 {
     let hz = args.frequency;
     let width = args.radius;
     let min = hz - width;
     let max = hz + width;
 
-    pink() >> lowpole_hz(max) >> highpole_hz(min)
+    white() >> lowpass_hz(max, Q) >> highpass_hz(min, Q)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
@@ -66,8 +68,8 @@ fn main_audio(args: &Args) -> impl AudioUnit64 {
     let min = hz - width;
     let max = hz + width;
 
-    let low = pink() >> lowpole_hz(min);
-    let high = pink() >> highpole_hz(max);
+    let low = white() >> lowpass_hz(min, Q);
+    let high = white() >> highpass_hz(max, Q);
 
     low + high
 }
@@ -96,7 +98,7 @@ where
             let start = start.get_or_insert_with(SystemTime::now);
             let time_passed = start.elapsed().unwrap().as_millis();
 
-            let (l, r) = match time_passed > 500 {
+            let (l, r) = match time_passed > 5000 {
                 true => main.get_stereo(),
                 false => sin.get_stereo(),
             };
