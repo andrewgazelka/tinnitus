@@ -24,9 +24,9 @@ struct Args {
     /// frequency of the tinnitus
     frequency: f64,
 
-    /// the frequency radius to notch out
-    #[clap(default_value = "50")]
-    radius: f64,
+    /// Q of the filter
+    #[clap(default_value = "1000.0")]
+    q: f64,
 }
 
 fn main() {
@@ -51,14 +51,12 @@ fn main() {
     }
 }
 
-const Q: f64 = 1000.0;
-
 fn removed_audio(args: &Args) -> impl AudioUnit64 {
-    white() >> bandpass_hz(args.frequency, Q)
+    white() >> bandpass_hz(args.frequency, args.q)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
-    white() >> notch_hz(args.frequency, Q)
+    white() >> notch_hz(args.frequency, args.q)
 }
 
 static LOUDNESS: Mutex<f64> = Mutex::new(0.1);
