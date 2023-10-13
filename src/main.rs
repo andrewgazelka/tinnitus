@@ -12,7 +12,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{bandpass_hz, notch_hz, prelude::*, white};
+use fundsp::hacker::{bandpass_hz, brown, notch_hz, prelude::*};
 
 use crate::utils::write_data;
 
@@ -29,7 +29,7 @@ struct Args {
     q: f64,
 
     /// volume to start at
-    #[clap(short, long, default_value = "0.1")]
+    #[clap(short, long, default_value = "0.5")]
     volume: f64,
 }
 
@@ -60,11 +60,11 @@ fn main() {
 }
 
 fn removed_audio(args: &Args) -> impl AudioUnit64 {
-    white() >> bandpass_hz(args.frequency, args.q)
+    brown() >> bandpass_hz(args.frequency, args.q)
 }
 
 fn main_audio(args: &Args) -> impl AudioUnit64 {
-    white() >> notch_hz(args.frequency, args.q)
+    brown() >> notch_hz(args.frequency, args.q)
 }
 
 fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: &Args) -> anyhow::Result<()>
