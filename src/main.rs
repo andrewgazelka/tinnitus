@@ -27,11 +27,19 @@ struct Args {
     /// Q of the filter
     #[clap(default_value = "1000.0")]
     q: f64,
+
+    /// volume to start at
+    #[clap(short, long, default_value = "0.1")]
+    volume: f64,
 }
+
+static LOUDNESS: Mutex<f64> = Mutex::new(0.1);
 
 fn main() {
     // input separated by spaces
     let args = Args::parse();
+
+    *LOUDNESS.lock().unwrap() = args.volume;
 
     enable_raw_mode().unwrap();
 
@@ -58,8 +66,6 @@ fn removed_audio(args: &Args) -> impl AudioUnit64 {
 fn main_audio(args: &Args) -> impl AudioUnit64 {
     white() >> notch_hz(args.frequency, args.q)
 }
-
-static LOUDNESS: Mutex<f64> = Mutex::new(0.1);
 
 fn run<T>(device: &cpal::Device, config: &cpal::StreamConfig, args: &Args) -> anyhow::Result<()>
 where
