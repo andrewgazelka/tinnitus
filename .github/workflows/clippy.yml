@@ -24,6 +24,11 @@ jobs:
         with:
           components: clippy
 
+      - uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: alsa-base alsa-utils
+          version: 1.0
+
       - uses: Swatinem/rust-cache@v2
 
       - name: Clippy check
