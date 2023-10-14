@@ -13,7 +13,6 @@ cpal = "0.15.2"
 crossterm = "0.27.0"
 ctrlc = "3.4.1"
 fundsp = "0.15.0"
-itertools = "0.11.0"
 
 # make release efficient
 [profile.release]
