@@ -12,7 +12,7 @@ use crossterm::{
     event::{Event, KeyCode, KeyEvent, KeyModifiers},
     terminal::{disable_raw_mode, enable_raw_mode},
 };
-use fundsp::hacker::{bandpass_hz, brown, notch_hz, prelude::*};
+use fundsp::hacker::*;
 
 use crate::utils::write_data;
 
@@ -84,19 +84,22 @@ where
 
     let mut start = None;
 
-    let mut next_value_sin = move || {
-        assert_no_alloc(|| {
-            let start = start.get_or_insert_with(SystemTime::now);
-            let time_passed = start.elapsed().unwrap().as_millis();
+    let mut next_value_sin = {
+        let mut main = main;
+        move || {
+            assert_no_alloc(|| {
+                let start = start.get_or_insert_with(SystemTime::now);
+                let time_passed = start.elapsed().unwrap().as_millis();
 
-            let (l, r) = match time_passed > 5000 {
-                true => main.get_stereo(),
-                false => sin.get_stereo(),
-            };
+                let (l, r) = match time_passed > 5000 {
+                    true => main.get_stereo(),
+                    false => sin.get_stereo(),
+                };
 
-            let loudness = *LOUDNESS.lock().unwrap();
-            (l * loudness, r * loudness)
-        })
+                let loudness = *LOUDNESS.lock().unwrap();
+                (l * loudness, r * loudness)
+            })
+        }
     };
 
     let err_fn = |err| eprintln!("an error occurred on stream: {err}");

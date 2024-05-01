@@ -6,13 +6,13 @@ authors = ["Andrew Gazelka <andrew.gazelka@gmail.com>"]
 description = "A TRT app for audio notching"
 
 [dependencies]
-anyhow = "1.0.75"
+anyhow = "1.0.82"
 assert_no_alloc = "1.1.2"
-clap = { version = "4.4.6", features = ["derive"] }
-cpal = "0.15.2"
+clap = { version = "4.5.4", features = ["derive"] }
+cpal = "0.15.3"
 crossterm = "0.27.0"
-ctrlc = "3.4.1"
-fundsp = "0.15.0"
+ctrlc = "3.4.4"
+fundsp = "0.17.1"
 
 # make release efficient
 [profile.release]
